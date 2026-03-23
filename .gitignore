@@ -1,0 +1,20 @@
+﻿# Ignore Word documents
+*.docx
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.log
