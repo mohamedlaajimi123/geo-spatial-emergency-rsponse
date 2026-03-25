@@ -1,0 +1,10 @@
+# Block Node/React heavy files globally
+node_modules/
+dist/
+.env
+
+# Block Python heavy files globally
+venv/
+env/
+__pycache__/
+*.pyc

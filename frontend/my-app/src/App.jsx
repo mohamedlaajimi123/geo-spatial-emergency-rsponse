@@ -1,30 +1,7 @@
 import { useState } from "react";
+import axios from "axios"; // Don't forget to run: npm install axios
 
-const hospitals = [
-  {
-    name: "Hospital A",
-    time: 7,
-    beds: "40/100",
-    score: 94,
-    specialties: ["Cardiology", "Trauma"],
-  },
-  {
-    name: "Hospital B",
-    time: 15,
-    beds: "5/100",
-    score: 62,
-    specialties: ["Burn", "ICU"],
-  },
-  {
-    name: "Hospital C",
-    time: 10,
-    beds: "20/100",
-    score: 80,
-    specialties: ["Neurology", "Stroke"],
-  },
-];
-
-const emergencyTypes = ["Cardiac", "Trauma", "Burn", "Stroke"];
+const emergencyTypes = ["Cardiac", "Trauma", "Burn", "Stroke", "General"];
 
 const rankConfig = {
   0: {
@@ -119,10 +96,10 @@ function MapPlaceholder() {
 
       {/* Corner labels */}
       <div className="absolute top-3 left-3 text-[10px] font-mono text-slate-500 tracking-widest">
-        LAT 40.7128° N
+        LAT 36.8300° N
       </div>
       <div className="absolute top-3 right-3 text-[10px] font-mono text-slate-500 tracking-widest">
-        LNG 74.0060° W
+        LNG 10.2000° E
       </div>
       <div className="absolute bottom-3 left-3 text-[10px] font-mono text-slate-500 tracking-widest">
         ZOOM LVL 12
@@ -145,7 +122,8 @@ function MapPlaceholder() {
 }
 
 function HospitalCard({ hospital, rank, visible }) {
-  const cfg = rankConfig[rank];
+  // Safe fallback just in case we have more than 3 results (rank > 2)
+  const cfg = rankConfig[rank] || rankConfig[2];
 
   return (
     <div
@@ -173,10 +151,12 @@ function HospitalCard({ hospital, rank, visible }) {
                 #{rank + 1} {cfg.label}
               </span>
             </div>
-            <h3 className="text-base font-semibold text-slate-100">{hospital.name}</h3>
+            {/* Bound to backend's hospital_name */}
+            <h3 className="text-base font-semibold text-slate-100">{hospital.hospital_name}</h3>
           </div>
           <div className={`px-2.5 py-1 rounded-lg text-xs font-bold ${cfg.badge}`}>
-            {hospital.score}
+            {/* Bound to backend's total_score */}
+            {hospital.total_score}
             <span className="font-normal opacity-70">/100</span>
           </div>
         </div>
@@ -187,7 +167,7 @@ function HospitalCard({ hospital, rank, visible }) {
             <div
               className={`h-full ${cfg.scoreBar} rounded-full transition-all duration-700`}
               style={{
-                width: visible ? `${hospital.score}%` : "0%",
+                width: visible ? `${hospital.total_score}%` : "0%",
                 transitionDelay: `${rank * 100 + 200}ms`,
               }}
             />
@@ -201,7 +181,8 @@ function HospitalCard({ hospital, rank, visible }) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <span className="text-xs text-slate-400">
-              <span className="text-slate-200 font-medium">{hospital.time} min</span> ETA
+              {/* Bound to backend's travel_time_score */}
+              <span className="text-slate-200 font-medium">{hospital.travel_time_score}</span> time pts
             </span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -209,21 +190,20 @@ function HospitalCard({ hospital, rank, visible }) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2M5 21H3" />
             </svg>
             <span className="text-xs text-slate-400">
-              <span className="text-slate-200 font-medium">{hospital.beds}</span> beds
+              {/* Bound to backend's bed_score */}
+              <span className="text-slate-200 font-medium">{hospital.bed_score}</span> bed pts
             </span>
           </div>
         </div>
 
         {/* Specialties */}
         <div className="flex flex-wrap gap-1.5">
-          {hospital.specialties.map((s) => (
-            <span
-              key={s}
-              className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-700/70 text-slate-400 border border-slate-700"
-            >
-              {s}
-            </span>
-          ))}
+           <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-700/70 text-slate-400 border border-slate-700">
+             Specialty Match: {hospital.specialty_score}%
+           </span>
+           <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-700/70 text-slate-400 border border-slate-700">
+             Rating: {hospital.rating_score}%
+           </span>
         </div>
       </div>
     </div>
@@ -236,16 +216,29 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  const handleFind = () => {
+  // Here is where the magic happens!
+  const handleFind = async () => {
     setLoading(true);
     setResults([]);
     setSearched(false);
-    setTimeout(() => {
-      const sorted = [...hospitals].sort((a, b) => b.score - a.score);
-      setResults(sorted);
-      setLoading(false);
+
+    try {
+      // Talk to the python server
+      const response = await axios.post("http://127.0.0.1:8000/api/emergency", {
+        lat: 36.8300,  // Tunis dummy coordinates
+        lng: 10.2000,
+        type: emergency.toLowerCase() // Send lowercase to backend
+      });
+
+      // Update state with REAL python data
+      setResults(response.data.results);
       setSearched(true);
-    }, 900);
+    } catch (error) {
+      console.error("Backend connection failed!", error);
+      alert("Could not connect to the Python backend. Is your FastAPI server running?");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -380,7 +373,7 @@ export default function App() {
             )}
 
             {results.map((h, i) => (
-              <HospitalCard key={h.name} hospital={h} rank={i} visible={searched} />
+              <HospitalCard key={i} hospital={h} rank={i} visible={searched} />
             ))}
           </div>
         </div>
