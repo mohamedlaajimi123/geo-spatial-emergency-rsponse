@@ -1,17 +1,17 @@
-from fastapi import FastAPI
+import math
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-# Import everyone's work!
-from kdtree import find_nearest_hospitals 
-from a_star_routing import get_travel_info
-from scoring_system import rank_hospitals
+from typing import List
+from hospitals import hospitals  # Importing your static list
 
 app = FastAPI()
 
+# ─── 1. THE FIX FOR "COULD NOT CONNECT" (CORS) ────────────────
+# This allows your React frontend (on port 5173/3000) to talk to this backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],  # In production, replace with your frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -20,55 +20,73 @@ app.add_middleware(
 class EmergencyRequest(BaseModel):
     lat: float
     lng: float
-    type: str # e.g., "cardiac", "trauma", "general"
+    type: str
+
+# ─── 2. GEOSPATIAL ENGINE ─────────────────────────────────────
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """
+    Haversine formula to calculate the great-circle distance 
+    between two points on the Earth (in km).
+    """
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * \
+        math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
 @app.post("/api/emergency")
-def handle_emergency(req: EmergencyRequest):
-    # ==========================================
-    # STEP 1: PERSON A (KD-Tree)
-    # ==========================================
-    closest_hospitals = find_nearest_hospitals(req.lat, req.lng, k=5)
+async def handle_emergency(request: EmergencyRequest):
+    results = []
     
-    # ==========================================
-    # STEP 2: PERSON B (A* Routing)
-    # ==========================================
-    hospitals_for_scoring = []
-    
-    for item in closest_hospitals:
-        # --- THE FIX IS HERE ---
-        # If Person A returned a tuple like (distance, hospital_dict), grab the dict!
-        if isinstance(item, tuple):
-            # The dictionary is usually the second item (index 1), but we check both just in case
-            hosp = item[1] if isinstance(item[1], dict) else item[0]
-        else:
-            hosp = item # Just in case it was already a dict
-        # -----------------------
+    # Standardize input for better matching
+    requested_type = request.type.lower().strip()
+
+    for hosp in hospitals:
+        # Check if the hospital has the required specialty
+        hosp_specialties = [s.lower() for s in hosp.get("specialties", [])]
         
-        # Now 'hosp' is guaranteed to be the dictionary!
-        route_info = get_travel_info(req.lat, req.lng, hosp["lat"], hosp["lng"])
-        travel_minutes = route_info["travel_time_min"]
-        
-        hospital_data = {
-            "name": hosp.get("name", "Unknown Hospital"),
-            "lat": hosp["lat"],
-            "lng": hosp["lng"],
-            "total_beds": hosp.get("total_beds", 200),
-            "occupied_beds": hosp.get("occupied_beds", 100),
-            "specialties": hosp.get("specialties", ["general", "cardiology", "trauma_center"]),
-            "rating": hosp.get("rating", 4.0),
-            "road_distance_km": route_info["distance_km"],
-            "route_path": route_info["path"]
-        }
-        
-        hospitals_for_scoring.append((hospital_data, travel_minutes))
-        
-    # ==========================================
-    # STEP 3: PERSON C (Scoring & Ranking)
-    # ==========================================
-    ranked_results = rank_hospitals(hospitals_for_scoring, req.type)
-    
-    return {
-        "status": "success", 
-        "emergency_type": req.type,
-        "results": ranked_results
-    }
+        if requested_type in hosp_specialties or requested_type == "general":
+            
+            # Distance Calculation
+            dist = calculate_distance(request.lat, request.lng, hosp["lat"], hosp["lng"])
+            
+            # --- ADVANCED SCORING LOGIC ---
+            
+            # A. Travel Time Score (Max 60 points)
+            # Penalty: -5 points per kilometer. If > 12km, score starts dropping fast.
+            time_score = max(0, 60 - (dist * 5)) 
+            
+            # B. Bed Availability Score (Max 40 points)
+            total_beds = hosp.get("total_beds", 1)
+            occupied = hosp.get("occupied_beds", 0)
+            availability_ratio = (total_beds - occupied) / total_beds
+            bed_score = max(0, availability_ratio * 40)
+            
+            # C. Rating Bonus (Max 10 points)
+            # Factoring in the user rating from your data
+            rating_bonus = (hosp.get("rating", 3.0) / 5) * 10
+            
+            final_score = round(time_score + bed_score + rating_bonus)
+
+            results.append({
+                "hospital_name": hosp["name"],
+                "lat": hosp["lat"],
+                "lng": hosp["lng"],
+                "distance_km": round(dist, 2),
+                "total_score": min(final_score, 100),
+                "travel_time_score": round(time_score),
+                "bed_score": round(bed_score),
+                "rating": hosp.get("rating", 0)
+            })
+
+    # Sort: Highest score (best option) at the top
+    sorted_results = sorted(results, key=lambda x: x["total_score"], reverse=True)
+
+    # Return top 5 for a better map view
+    return {"results": sorted_results[:5]}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
