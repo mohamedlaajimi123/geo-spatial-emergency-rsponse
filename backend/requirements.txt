@@ -1,3 +1,4 @@
 fastapi
 uvicorn
 pydantic
+#to run the backend uvicorn main:app --reload
